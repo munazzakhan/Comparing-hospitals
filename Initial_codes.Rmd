@@ -1,0 +1,465 @@
+---
+title: "Comparing_Hospitals"
+author: "Munazza"
+date: "March 15, 2017"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r install_packages ,echo=FALSE}
+library(sqldf)
+library(tcltk)
+library(Hmisc)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+library(forcats)
+```
+## getting data
+
+```{r}
+state_info <- read.table('C:/Users/naseem/Documents/CKME136/states_info.txt',header=T ,sep = '\t',na.string=c("","NA"))
+state_info =data.frame(state_info)
+names(state_info)= c("State_name","area_ranking","area_sqmi","area_sqkm","land_area_sqmi","land_area_sqkm","population_ranking","population","State","capital_city")
+
+data2 <- read.table('C:/Users/naseem/Documents/CKME136/data/Hospital General Information.csv',header=T ,sep = ',',na.string=c("","NA","Not Available","NaN"))
+data2 = data.frame(data2)
+names(data2)<- c("Provider_ID","Hospital_Name","Address","City","State","ZIP_Code","County_Name","Phone_Number",
+                "Hospital_Type","Hospital_Ownership","Emergency_Services","Meets_criteria_for_meaningful_use_of_EHRs",
+                "Hospital_overall_rating","footnote1","Mortality_national_comparison",
+                "footnote2","Safety_of_care_national_comparison","footnote3",
+                "Readmission_national_comparison","footnote4","Patient_experience_national_comparison",
+                "footnote5","Effectiveness_of_care_national_comparison",
+                "footnote6","Timeliness_of_care_national_comparison",
+                "footnote7","Efficient_use_of_medical_imaging_national_comparison",
+                "footnote8")
+
+gen_info<-data2[,c("Provider_ID","Hospital_Name","State",
+                   "Hospital_Type","Hospital_Ownership","Emergency_Services",
+                   "Meets_criteria_for_meaningful_use_of_EHRs",
+                   "Hospital_overall_rating","Mortality_national_comparison",
+                   "Safety_of_care_national_comparison",
+                   "Readmission_national_comparison","Patient_experience_national_comparison",
+                   "Effectiveness_of_care_national_comparison",
+                   "Timeliness_of_care_national_comparison",
+                   "Efficient_use_of_medical_imaging_national_comparison")]
+
+```
+
+```{r}
+describe(state_info)
+describe(gen_info)
+
+```
+##Analyzing dataset
+
+```{r}
+table(gen_info$State)
+max(table(gen_info$State))
+barplot(table(gen_info$State),main="Hospital Per state")
+table(gen_info$Hospital_Ownership)
+barplot(table(gen_info$Hospital_Ownership),main="Hospital ownership Per state",names.arg = NULL )
+
+table(gen_info$Hospital_Type)
+barplot(table(gen_info$Hospital_Type),main="Hospital Types Per state",names=c("Acute Care Hospitals","Childrens","Critical Access Hospitals"),col = c("pink","lightblue","grey"),xlab = "Hospital Type",ylab = "No of Hospitals")
+
+##Joining state_info and gen_info
+
+state_pop<-left_join(gen_info,state_info)
+head(state_pop)
+state_pop$population<-as.numeric(state_pop$population)
+hist(state_pop$population)
+str(state_pop)
+
+## Calculating the correlation between no.of hospitals per state and population,
+## no. of hospitals per state and area,and area of a state and population
+pop_state<-sqldf('select State,count(*) as cnt,population,land_area_sqkm as area from state_pop  group by State order by cnt')
+cor(pop_state$cnt,pop_state$population)
+plot(pop_state$population,pop_state$cnt,main = "Relation b/w No.of Hospitals & Population")
+barplot(pop_state$population,pop_state$cnt,main = "Relation b/w No.of Hospitals & Population")
+## 0.891 shows that there is a  strong positive relation between the no of hospitals and population
+
+cor(pop_state$cnt,pop_state$area)
+plot(pop_state$cnt,pop_state$area, main = "Relation b/w No.of Hospitals & Area")
+barplot(pop_state$cnt,pop_state$area, main = "Relation b/w No.of Hospitals & Area")
+## .0354 means there is a positive but weak relation between no. of hospitals and area of a state
+## Finding out if there is a relation between area and population.
+cor(pop_state$population,pop_state$area)
+plot(pop_state$population,pop_state$area, main = "Relation b/w Population & Area of a State")
+barplot(pop_state$population,pop_state$area, main = "Relation b/w No.of Hospitals & Area")
+
+## No of hospitals is related to population of state and its a positive relation which mean higher the no. of hospitals greater the poulation would be.
+```
+## Comparing Hospitals in terms of Ratings
+```{r}
+rating_state<-sqldf('select State,count(*) as cnt,sum(Hospital_overall_rating) as rating from gen_info  group by State order by cnt')
+rating_state$rating= as.numeric(rating_state$rating)
+rating_state=mutate(rating_state,state.rating=rating/cnt)
+top_state_rating=(arrange(rating_state,desc(state.rating)))
+head(top_state_rating,n=10)
+
+hospital.theme<-theme(
+  axis.text = element_text(size = 8),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.title = element_text(size = 14),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_blank(),
+  panel.background = element_rect(fill = "snow1"),
+  legend.position = "right",
+  legend.justification = "top", 
+  legend.background = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+plot.rating.cnt<-ggplot(data = rating_state,
+                         aes(x=as.numeric(cnt),
+                             y=state.rating))+
+  geom_line(size=2,col="yellow3")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+
+plot.rating.cnt.points<-ggplot(data = rating_state,
+                                aes(x=as.factor(cnt),
+                                    y=state.rating))+
+  geom_point(size=1,col="blue")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+plot.by.state <- ggplot(data = rating_state,
+                        aes(x=as.factor(State),
+                            y=state.rating))+
+  geom_bar(stat= "identity", fill="darkred", width=0.5 )+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State",
+       y="Rating Per State")+
+  theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+grid.arrange(arrangeGrob(plot.rating.cnt,plot.rating.cnt.points,ncol=2),
+             plot.by.state)
+
+```
+## Top 10 States in terms of No of Hospitals
+
+```{r}
+## Finding the Best 10 State in term of no. of hospitals provided by State over population and area per state
+
+pop_state<-sqldf('select State,count(*) as cnt,population,land_area_sqkm as area from state_pop  group by State order by cnt')
+pop_state$cnt= as.numeric(pop_state$cnt)
+pop_state=mutate(pop_state,hos_pop_ratio=population/cnt,hos_area_ratio=area/cnt)
+top_state_pop_ratio=(arrange(pop_state,desc(hos_pop_ratio)))
+head(top_state_pop_ratio,n=10)
+ ## theme of the results
+
+
+plot.hos<-ggplot(data = pop_state,
+                         aes(x=as.numeric(cnt),
+                             y=hos_pop_ratio))+
+  geom_line(size=2,col="yellow3")+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+
+plot.hos.points<-ggplot(data = pop_state,
+                                aes(x=as.factor(State),
+                                    y=hos_pop_ratio))+
+  geom_point(size=1,col="blue")+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+pop_state$State <- fct_inorder(pop_state$State)
+plot.by.state <- ggplot(data = pop_state,
+                        aes(x=as.factor(State),
+                            y=hos_pop_ratio))+
+  geom_bar(stat= "identity", fill="darkred", width=0.5 )+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+grid.arrange(arrangeGrob(plot.hos,plot.hos.points,ncol=2),
+             plot.by.state)
+
+```
+## Finding NA's in other variables of  gen_info 
+
+```{r}
+sum(is.na(gen_info$Meets_criteria_for_meaningful_use_of_EHRs) == TRUE)
+length(gen_info$Meets_criteria_for_meaningful_use_of_EHRs)
+table(gen_info$Meets_criteria_for_meaningful_use_of_EHRs,useNA="always")
+gen_info$Meets_criteria_for_meaningful_use_of_EHRs[is.na(gen_info$Meets_criteria_for_meaningful_use_of_EHRs)]="Y"
+table(gen_info$Meets_criteria_for_meaningful_use_of_EHRs,useNA="always")
+##Meets_criteria_for_meaningful_use_of_EHRs cannot be used for any purpose as there is no variance.
+
+sum(is.na(gen_info$Hospital_overall_rating) == TRUE)
+table(gen_info$Hospital_overall_rating,useNA="always")
+gen_info$Hospital_overall_rating=as.numeric(gen_info$Hospital_overall_rating)
+xx=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)
+x=select(xx,Hospital_Ownership,Hospital_overall_rating)
+group.x=group_by(x,Hospital_Ownership)
+summarize(group.x,mean=mean(Hospital_overall_rating))
+
+gen_info$Hospital_overall_rating[grepl("Physician",gen_info$Hospital_Ownership) & is.na(gen_info$Hospital_overall_rating)]=4
+gen_info$Hospital_overall_rating[grepl("Tribal",gen_info$Hospital_Ownership) & is.na(gen_info$Hospital_overall_rating)]=2
+gen_info$Hospital_overall_rating[is.na(gen_info$Hospital_overall_rating)]=3
+
+table(gen_info$Hospital_overall_rating,useNA="always")
+hist(gen_info$Hospital_overall_rating)
+
+sum(is.na(gen_info$Safety_of_care_national_comparison) == TRUE)
+table(gen_info$Safety_of_care_national_comparison,useNA="always")
+
+
+sum(is.na(gen_info$Mortality_national_comparison) == TRUE)
+table(gen_info$Mortality_national_comparison,useNA="always")
+
+sum(is.na(gen_info$Readmission_national_comparison) == TRUE)
+table(gen_info$Readmission_national_comparison,useNA="always")
+
+sum(is.na(gen_info$Patient_experience_national_comparison) == TRUE)
+table(gen_info$Patient_experience_national_comparison,useNA="always")
+
+sum(is.na(gen_info$Effectiveness_of_care_national_comparison) == TRUE)
+table(gen_info$Effectiveness_of_care_national_comparison,useNA="always")
+
+sum(is.na(gen_info$Timeliness_of_care_national_comparison) == TRUE)
+table(gen_info$Timeliness_of_care_national_comparison,useNA="always")
+
+sum(is.na(gen_info$Efficient_use_of_medical_imaging_national_comparison) == TRUE)
+table(gen_info$Efficient_use_of_medical_imaging_national_comparison,useNA="always")
+nrow(gen_info)
+##Finding the combination of variables in order to remove max. no of NA's
+nrow(gen_info[is.na(
+                 gen_info$Readmission_national_comparison==T&
+                 gen_info$Mortality_national_comparison==T&
+                 gen_info$Effectiveness_of_care_national_comparison==T&
+                 gen_info$Patient_experience_national_comparison==T&
+                 gen_info$Timeliness_of_care_national_comparison==T&
+                 gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+  gen_info$Readmission_national_comparison==T&
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+  gen_info$Readmission_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+ 
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),])
+
+nrow(gen_info[is.na(
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T),])
+
+nrow(gen_info[is.na(
+  gen_info$Readmission_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T),])
+##Using given combination of variables will remove max. rows containing NA's
+nrow(gen_info)
+gen_info_NA=gen_info[is.na(
+  gen_info$Readmission_national_comparison==T&
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Timeliness_of_care_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),]
+nrow(gen_info_NA)
+gen_info<- setdiff(gen_info,gen_info_NA)
+nrow(gen_info)
+
+gen_info_NA_1=gen_info[is.na(
+    gen_info$Mortality_national_comparison==T&
+    gen_info$Effectiveness_of_care_national_comparison==T&
+    gen_info$Patient_experience_national_comparison==T&
+    gen_info$Efficient_use_of_medical_imaging_national_comparison==T),]
+nrow(gen_info_NA_1)
+gen_info<- setdiff(gen_info,gen_info_NA_1)
+nrow(gen_info)
+```
+
+## Recalculating NA's after filtering rows and assigning values to remaining NA's
+```{r}
+gen_info$Safety_of_care_national_comparison[is.na(gen_info$Safety_of_care_national_comparison)]="Same as the National average"
+table(gen_info$Safety_of_care_national_comparison,useNA="always")
+
+gen_info$Mortality_national_comparison[is.na(gen_info$Mortality_national_comparison)]="Same as the National average"
+table(gen_info$Mortality_national_comparison,useNA="always")
+
+gen_info$Readmission_national_comparison[is.na(gen_info$Readmission_national_comparison)]="Same as the National average"
+table(gen_info$Readmission_national_comparison,useNA="always")
+
+gen_info$Patient_experience_national_comparison[is.na(gen_info$Patient_experience_national_comparison)]="Same as the National average"
+table(gen_info$Patient_experience_national_comparison,useNA="always")
+
+gen_info$Effectiveness_of_care_national_comparison[is.na(gen_info$Effectiveness_of_care_national_comparison)]="Same as the National average"
+table(gen_info$Effectiveness_of_care_national_comparison,useNA="always")
+
+gen_info$Timeliness_of_care_national_comparison[is.na(gen_info$Timeliness_of_care_national_comparison)]="Same as the National average"
+table(gen_info$Timeliness_of_care_national_comparison,useNA="always")
+
+gen_info$Efficient_use_of_medical_imaging_national_comparison[is.na(gen_info$Efficient_use_of_medical_imaging_national_comparison)]="Same as the National average"
+table(gen_info$Efficient_use_of_medical_imaging_national_comparison,useNA="always")
+
+```
+##Filtering Rows with the value "Same as National average" as it will effect the final results and filtering the rows which doesnt have "Same as National average" in any variable.
+
+```{r}
+nrow(gen_info)
+nrow(filter(gen_info,
+    Mortality_national_comparison=="Same as the National average"&
+    Effectiveness_of_care_national_comparison=="Same as the National average"&
+      Safety_of_care_national_comparison=="Same as the National average"&
+      Readmission_national_comparison=="Same as the National average"&
+      Patient_experience_national_comparison=="Same as the National average"&
+    Timeliness_of_care_national_comparison=="Same as the National average"&
+    Efficient_use_of_medical_imaging_national_comparison=="Same as the National average"))
+
+nrow(filter(gen_info,
+    Mortality_national_comparison=="Same as the National average"|
+    Effectiveness_of_care_national_comparison=="Same as the National average"|
+      Safety_of_care_national_comparison=="Same as the National average"|
+      Readmission_national_comparison=="Same as the National average"|
+      Patient_experience_national_comparison=="Same as the National average"|
+    Timeliness_of_care_national_comparison=="Same as the National average"|
+    Efficient_use_of_medical_imaging_national_comparison=="Same as the National average"))
+
+nrow(filter(gen_info,
+    Mortality_national_comparison!="Same as the National average"&
+    Effectiveness_of_care_national_comparison!="Same as the National average"&
+      Safety_of_care_national_comparison!="Same as the National average"&
+      Readmission_national_comparison!="Same as the National average"&
+      Patient_experience_national_comparison!="Same as the National average"&
+    Timeliness_of_care_national_comparison!="Same as the National average"&
+    Efficient_use_of_medical_imaging_national_comparison!="Same as the National average"))
+
+
+gen_info_filtr=filter(gen_info,
+    Mortality_national_comparison!="Same as the National average"&
+    Effectiveness_of_care_national_comparison!="Same as the National average"&
+      Safety_of_care_national_comparison!="Same as the National average"&
+      Readmission_national_comparison!="Same as the National average"&
+      Patient_experience_national_comparison!="Same as the National average"&
+    Timeliness_of_care_national_comparison!="Same as the National average"&
+    Efficient_use_of_medical_imaging_national_comparison!="Same as the National average")
+
+```
+##Ananlysing Hospitals which are either above or below the national average in all variables
+
+```{r}
+gen_info_filtr=filter(gen_info,
+    Mortality_national_comparison!="Same as the National average"&
+    Effectiveness_of_care_national_comparison!="Same as the National average"&
+      Safety_of_care_national_comparison!="Same as the National average"&
+      Readmission_national_comparison!="Same as the National average"&
+      Patient_experience_national_comparison!="Same as the National average"&
+    Timeliness_of_care_national_comparison!="Same as the National average"&
+    Efficient_use_of_medical_imaging_national_comparison!="Same as the National average")
+
+table(gen_info_filtr$Safety_of_care_national_comparison)
+
+filter_1 = sqldf('select Safety_of_care_national_comparison as safety_of_care,count(*) as cnt from gen_info_filtr group by Safety_of_care_national_comparison')
+
+plot1=barplot(filter_1$cnt,main = "Comparing Safety of Care",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Mortality_national_comparison)
+filter_2 = sqldf('select Mortality_national_comparison as Mortality,count(*) as cnt from gen_info_filtr group by Mortality_national_comparison')
+
+plot2=barplot(filter_2$cnt,main = "Comparing Mortality",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Readmission_national_comparison)
+filter_3 = sqldf('select Readmission_national_comparison as Readmission,count(*) as cnt from gen_info_filtr group by Readmission_national_comparison')
+
+plot3=barplot(filter_3$cnt,main = "Readmission",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Patient_experience_national_comparison)
+filter_4 = sqldf('select Patient_experience_national_comparison,count(*) as cnt from gen_info_filtr group by Patient_experience_national_comparison')
+
+plot4=barplot(filter_4$cnt,main = "Patient Experience",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Effectiveness_of_care_national_comparison)
+filter_5 = sqldf('select Effectiveness_of_care_national_comparison,count(*) as cnt from gen_info_filtr group by Effectiveness_of_care_national_comparison')
+
+plot5=barplot(filter_5$cnt,main = "Effectiveness of care",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Timeliness_of_care_national_comparison)
+filter_6 = sqldf('select Timeliness_of_care_national_comparison,count(*) as cnt from gen_info_filtr group by Timeliness_of_care_national_comparison')
+
+plot6=barplot(filter_6$cnt,main = "Timeliness of care",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+table(gen_info_filtr$Efficient_use_of_medical_imaging_national_comparison)
+filter_7 = sqldf('select Efficient_use_of_medical_imaging_national_comparison,count(*) as cnt from gen_info_filtr group by Efficient_use_of_medical_imaging_national_comparison')
+
+plot7=barplot(filter_7$cnt,main = "Efficient use of medical imaging",names=c("Above Average","Below Average"),col = c("pink","lightblue"))
+
+
+
+```
+
+```{r}
+
+nrow(filter(gen_info,
+    Mortality_national_comparison=="Above the National average"&
+    Effectiveness_of_care_national_comparison=="Above the National average"&
+      Safety_of_care_national_comparison=="Above the National average"&
+      Readmission_national_comparison=="Above the National average"&
+      Patient_experience_national_comparison=="Above the National average"&
+    Timeliness_of_care_national_comparison=="Above the National average"&
+    Efficient_use_of_medical_imaging_national_comparison=="Same as the National average"))
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
