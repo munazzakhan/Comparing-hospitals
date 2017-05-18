@@ -1,0 +1,1425 @@
+---
+title: "Comparing_Hospitals"
+author: "Munazza Khan"
+date: "April 11, 2017"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r install_packages ,dependencies=T,echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sqldf)
+library(tcltk)
+library(Hmisc)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+library(forcats)
+library(ggmap)
+library(leaflet)
+library(zipcode)
+library(yaml)
+library(maps)
+library(USAboundaries)
+library(dismo)
+library(raster)
+library(rgdal)
+library("ggcounty")
+library(extracat)##used for iplots to plot scpcp(static categorical parallel coordinats plot )
+library(iplots)## used for cpcp
+library(rpart)##for decision tree induction
+library(rpart.plot)## for plotting decision tree
+library(rJava)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(party)##for ctree
+library(C50)##for c50 decision tree
+library(knncat)##for KNN
+library(e1071)##for naive Bayes
+```
+## getting data
+
+```{r getting data}
+data2 <- read.table('C:/Users/naseem/Documents/CKME136/comparing hospitals/hospital_information.txt',header=T ,sep = '',na.string=c("","NA","Not Available","NaN"))
+data2 = data.frame(data2)
+names(data2)<- c("Provider_ID","Hospital_Name","Address","City","State","zip","County_Name","Phone_Number",
+                "Hospital_Type","Hospital_Ownership","Emergency_Services","Meets_criteria_for_meaningful_use_of_EHRs",
+                "Hospital_overall_rating","footnote1","mortality",
+                "footnote2","Safety_of_care","footnote3",
+                "Readmissions","footnote4","Patient_experience",
+                "footnote5","Effectiveness_of_care",
+                "footnote6","Timeliness_of_care",
+                "footnote7","Efficient_use_of_medical_imaging",
+                "footnote8")
+
+gen_info<-data2[,c("Provider_ID","Hospital_Name","City","State","zip",
+                   "Hospital_Type","Hospital_Ownership","Emergency_Services",
+                   "Meets_criteria_for_meaningful_use_of_EHRs",
+                   "Hospital_overall_rating","mortality",
+                   "Safety_of_care",
+                   "Readmissions","Patient_experience",
+                   "Effectiveness_of_care",
+                   "Timeliness_of_care",
+                   "Efficient_use_of_medical_imaging")]
+```
+## Data Intergration Steps
+## Adding more Variables to gen_info
+```{r Data Integration}
+
+library(noncensus)
+
+data(zip_codes)## adding latitude and longitude based on zip cods
+head(zip_codes,3)
+describe(zip_codes)
+nrow(zip_codes)
+zip_codes=zip_codes[,c(1,4,5,6)]##dropping column state as its already a part of gen_info
+head(zip_codes,n=3)
+zip_codes$zip=as.numeric(zip_codes$zip)
+gen_info=left_join(gen_info,zip_codes)
+head(gen_info,3)
+
+library("ggcounty")
+data("population")## getting population of cities
+head(population)
+describe(population)
+nrow(population)
+names(population)=c("fips","population")
+head(population)
+nrow(table(gen_info$fips))
+class(gen_info$fips)
+class(population$fips)
+population$fips=as.numeric(population$fips)
+gen_info=left_join(gen_info,population)
+names(gen_info)
+sum(is.na(gen_info$population)==T)
+sum(is.na(gen_info$latitude)==T)
+sum(is.na(gen_info$fips))
+sum(is.na(gen_info$longitude))
+
+
+data("us.cities")##Finding out the Capital City
+head(us.cities)
+describe(us.cities)
+table(us.cities$capital)
+filter(us.cities,capital==2)## the cities with Capital=2 are the capital cities Verified on the internet
+nrow(us.cities)
+us.cities=us.cities[,c(1,6)]
+gen_info=mutate(gen_info,name=paste(City,State))
+gen_info=mutate(gen_info,name=paste(City,State))
+gen_info$name=tolower(gen_info$name)
+us.cities$name=tolower(us.cities$name)
+                
+class(us.cities$name)
+class(gen_info$name)
+gen_info=left_join(gen_info,us.cities)
+table(gen_info$capital,useNA = "always")
+gen_info$capital[is.na(gen_info$capital)]=0##assigning 0 to NA's as they are not capital cities
+class(gen_info$capital)
+gen_info$capital=as.factor(gen_info$capital)
+
+library(USAboundaries)
+state_boundaries <- us_states()##addiing land Area of  the cities
+sapply(state_boundaries@data, class)
+head(state_boundaries@data, n = 2)
+describe(state_boundaries@data)
+state_area=state_boundaries@data[,c("geoid","stusps","aland")]
+class(state_area)
+state_area=data.frame(state_area)
+names(state_area)=c("geoid","State","land_area")
+head(state_area)
+state_area$State=as.character(state_area$State)
+gen_info$State=as.character(gen_info$State)
+gen_info=left_join(gen_info,state_area)
+head(gen_info,3)
+nrow(table(gen_info$geoid))
+gen_info=filter(gen_info,is.na(gen_info$land_area)==FALSE)
+gen_info$land_area=as.numeric(gen_info$land_area)
+q <- quantile(gen_info$land_area, c(0, .25, .50, .75, 1))
+gen_info = data.frame(gen_info, area_bin=cut(gen_info$land_area, q,labels = c("small","medium","big","verybig"), ordered=TRUE, include.lowest=TRUE))
+
+plot(table(gen_info$area_bin))
+gen_info$area_bin=as.factor(gen_info$area_bin)
+
+sum(is.na(gen_info$population))
+gen_info=filter(gen_info,is.na(gen_info$population)==FALSE)
+gen_info$population=as.numeric(gen_info$population)
+q <- quantile(gen_info$population, c(0, .25, .50, .75, 1))
+class(gen_info$pop_bin)
+gen_info = data.frame(gen_info, pop_bin=cut(gen_info$population, q,labels=c(
+  "small","medium","big","verybig"),ordered=T ,include.lowest=TRUE))
+plot(table(gen_info$pop_bin))
+gen_info$pop_bin=as.factor(gen_info$pop_bin)
+
+
+cols <- c("State","City","Hospital_Type","Hospital_Ownership",
+          "capital","Meets_criteria_for_meaningful_use_of_EHRs",
+          "Hospital_overall_rating","mortality",
+          "Safety_of_care",
+          "Readmissions","Patient_experience",
+          "Effectiveness_of_care",
+          "Timeliness_of_care",
+          "Efficient_use_of_medical_imaging")
+gen_info[cols] <- lapply(gen_info[cols], as.factor)
+
+factor_var=c("mortality",
+          "Safety_of_care",
+          "Readmissions","Patient_experience",
+          "Effectiveness_of_care",
+          "Timeliness_of_care",
+          "Efficient_use_of_medical_imaging",
+          "Patient_experience")
+table(gen_info$Hospital_overall_rating)
+levels(gen_info$mortality)
+
+
+table(gen_info$capital)
+gen_info$capital=factor(gen_info$capital,labels = c("No","Yes"))
+
+names(gen_info)
+describe(gen_info)
+table(gen_info$Hospital_overall_rating,gen_info$State,useNA = "always")
+table(gen_info$Hospital_overall_rating,gen_info$Hospital_Type,useNA = "always")
+table(gen_info$Hospital_overall_rating,gen_info$Hospital_Ownership,useNA = "always")
+
+
+
+```
+##Analysing Data
+##visualizing the density of Hospitals on US map based on different variables
+```{r Univariate Analysis-Distribution on Map}
+##visualizing the density of Hospitals on US using different variables
+
+hospital.theme<-theme(
+  axis.text = element_text(size = 8),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.title = element_text(size = 9),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_blank(),
+  panel.background = element_rect(fill = "snow1"),
+  legend.position = "right",
+  legend.justification = "top", 
+  legend.background = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+theme_set(theme_bw(16))
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "bottomleft")
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = population), data = gen_info,title="Population")+hospital.theme+
+  ggtitle("Population of State")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+
+StateMap <- qmap("USA", zoom = 4, color = "bw", legend = "bottomleft")
+StateMap + geom_point(aes(x = longitude, y = latitude, colour =Provider_ID), data = gen_info,title="Population")+hospital.theme+
+  ggtitle("Distribution of Hospitals")
+    
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "bottomleft")
+StateMap + geom_point(aes(x = longitude, y = latitude, colour =Provider_ID), data = gen_info,title="Population")+hospital.theme+
+  ggtitle("Distribution of Hospitals")
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = State), data = gen_info)+hospital.theme+
+  ggtitle("Hospitals Distribution over states")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = mortality), data = gen_info)+hospital.theme+
+  ggtitle("Mortality rate in hospitals")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "bottomleft")
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Hospital_Type), data = gen_info,title="Types of Hospitals")
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Hospital_Ownership), data = gen_info)+hospital.theme+
+  ggtitle("Ownership of Hospitals")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Hospital_overall_rating), data = gen_info)+hospital.theme+
+  ggtitle("Hospital Ratings ")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 4, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Hospital_overall_rating), data = gen_info)+hospital.theme+
+  ggtitle("Hospital Ratings ")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = area_bin,size=area_bin), data = gen_info)+hospital.theme+
+  ggtitle("Area_bin")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = pop_bin,size=pop_bin), data = gen_info)+hospital.theme+
+  ggtitle("Population_bin")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = capital, size = capital), data = gen_info)+
+  ggtitle("Hospitals located in Capital Cities")
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Emergency_Services), data = gen_info)+
+  ggtitle("Emergency services in Hospitals")
+  
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Readmissions), data = gen_info)+hospital.theme+
+  ggtitle("Readmissions in Hospaitals")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Efficient_use_of_medical_imaging), data = gen_info)+hospital.theme+
+  ggtitle("Efficient Medical Imaging in Hospitals")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Effectiveness_of_care), data = gen_info)+hospital.theme+
+  ggtitle("Effective care in  Hospitals")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Safety_of_care), data = gen_info)+hospital.theme+hospital.theme+
+  ggtitle("Safety of care")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Timeliness_of_care), data = gen_info)+hospital.theme+hospital.theme+
+  ggtitle("Timely care")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Efficient_use_of_medical_imaging), data = gen_info)+hospital.theme+hospital.theme+
+  ggtitle("Use of Medical Imaging")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+
+StateMap + stat_bin2d( aes(x = longitude, y = latitude,
+    colour = Hospital_Ownership, fill = Hospital_Ownership), 
+    size = 1, bins = 30, alpha = 1/2, data = gen_info)+ 
+  theme(legend.background = element_rect(colour = "black"))
+
+StateMap + stat_bin2d( aes(x = longitude, y = latitude,
+                           colour = capital, fill = capital), 
+                       size = 1, bins = 30, alpha = 1/4, data = gen_info)+ 
+  theme(legend.background = element_rect(colour = "black"))
+
+
+```
+##Analyzing dataset
+##Univariate Analysis
+```{r Univariate Analysis}
+palette=getcolors(6, "rgb")
+table(gen_info$State)
+max(table(gen_info$State))
+barplot(table(gen_info$City),main="Hospitals-City")
+barplot(table(gen_info$State),main="Hospital-State")
+barplot(table(gen_info$Hospital_Ownership),main="Hospital-ownership")
+table(gen_info$Hospital_Ownership)
+barplot(table(gen_info$Hospital_Type),main="Hospital_Types",col=c("pink","blue","green"))
+barplot(table(gen_info$capital),main="Hospital-Capital Cities",col=c("pink","blue","green"))
+barplot(table(gen_info$Emergency_Services),main="Hospital-Emergency Servives",col=c("pink","blue","green"))
+table(gen_info$Emergency_Services,useNA = 'always')
+hist(gen_info$population,col=c("pink","blue","green"))
+gen_info$Hospital_overall_rating=as.numeric(gen_info$Hospital_overall_rating)
+hist(gen_info$Hospital_overall_rating,col=c("pink","blue","green","yellow","grey"),main="Hospital Ratings",xlab="Ratings")
+boxplot(gen_info$Hospital_overall_rating,horizontal=T,main = "Hospital rating distribution",col=c("pink","blue","green","yellow","grey"))
+counts <- table(gen_info$Hospital_overall_rating, gen_info$State)
+barplot(counts, main="Rating Distribution for States",
+xlab="Ratings", col=c("green","red","yellow","pink","darkblue"),
+ legend = rownames(counts), beside=TRUE)
+
+barplot(table(gen_info$Meets_criteria_for_meaningful_use_of_EHRs),
+        main="Hospital-Meets_criteria_for_meaningful_use_of_EHRs",col=c("pink","blue","green","yellow","grey"))
+barplot(table(gen_info$City),main="Hospitals-City",col=c("pink","blue","green","yellow","grey"))
+
+barplot(table(gen_info$Safety_of_care),main = "Comparing Safety of Care",col=c("pink","blue","green","yellow","grey"))
+
+barplot(table(gen_info$Readmissions),main = "Comparing Readmissions",col=c("pink","blue","green","yellow","grey"))
+table(gen_info$Readmissions)
+
+barplot(table(gen_info$Patient_experience),main = "Patient experience",col=c("pink","blue","green","yellow","grey"))
+
+barplot(table(gen_info$Effectiveness_of_care),main = "Effectiveness of care",col=c("pink","blue","green","yellow","grey"))
+barplot(table(gen_info$Timeliness_of_care),main = "Timeliness of care",col=c("pink","blue","green","yellow","grey"))
+barplot(table(gen_info$Efficient_use_of_medical_imaging),main = "Efficient use of medical imaging",col=c("pink","blue","green","yellow","grey"))
+barplot(table(gen_info$mortality),main = "Comparing Mortality",col=c("pink","blue","green","yellow","grey"))
+barplot(table(gen_info$Readmissions),main = "Comparing Readmissions",col=c("pink","blue","green","yellow","grey"))
+table(gen_info$capital)
+barplot(table(gen_info$Hospital_Ownership),main = "Comparing Hospitals Ownerships",col=c("pink","blue","green","yellow","grey"),horiz=F,beside=T)
+table(gen_info$Hospital_Ownership)
+?barplot
+
+```
+##Analyzing dataset
+##Bivariate Analysis
+##Chi Square Analysis
+```{r Bivariate Analysis}
+##Test the hypothesis whether the Hospital rating is independent of Hospital Type level at .05 significance level.
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Hospital_Type)
+class(tbl)
+tbl=tbl[,-2]
+tbl
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Hospital_Ownership) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Emergency_Services) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$mortality) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Meets_criteria_for_meaningful_use_of_EHRs) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Safety_of_care) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Readmissions) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Patient_experience) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Effectiveness_of_care) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Timeliness_of_care) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$Efficient_use_of_medical_imaging) 
+chisq.test(tbl)
+
+tbl = table(gen_info$Hospital_overall_rating, gen_info$capital) 
+chisq.test(tbl)
+
+cor(gen_info$Hospital_overall_rating,gen_info$population)
+
+
+```
+```{r aggregration-}
+
+## Top 10 States in terms of No of Hospitals
+
+## Finding the Best 10 State in term of no. of hospitals provided by State over population and area per state
+
+pop_state<-sqldf('select State,count(*) as cnt,population,land_area as area from gen_info  group by State order by cnt')
+pop_state=data.frame(pop_state)
+pop_state$cnt= as.numeric(pop_state$cnt)
+pop_state$population=as.numeric(pop_state$population)
+pop_state$area=as.numeric(pop_state$area)
+pop_state=mutate(pop_state,hos_pop_ratio=population/cnt,hos_area_ratio=area/cnt)
+top_state_pop_ratio=(arrange(pop_state,desc(hos_pop_ratio)))
+head(top_state_pop_ratio,n=10)
+ ## theme of the results
+
+hospital.theme<-theme(
+  axis.text = element_text(size = 8),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.title = element_text(size = 10),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_blank(),
+  panel.background = element_rect(fill = "snow1"),
+  legend.position = "right",
+  legend.justification = "top", 
+  legend.background = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+plot.hos<-ggplot(data = pop_state,
+                         aes(x=as.numeric(cnt),
+                             y=hos_pop_ratio))+
+  geom_line(size=2,col="yellow3")+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+
+plot.hos.points<-ggplot(data = pop_state,
+                                aes(x=as.factor(State),
+                                    y=hos_pop_ratio))+
+  geom_point(size=1,col="blue")+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+pop_state$State <- fct_inorder(pop_state$State)
+plot.by.state <- ggplot(data = pop_state,
+                        aes(x=as.factor(State),
+                            y=hos_pop_ratio))+
+  geom_bar(stat= "identity", fill="darkred", width=0.5 )+
+  hospital.theme+
+  ggtitle("Number of Hospitals per State")+
+  labs(x="State Name",
+       y="No. Of Hospitals")+
+  theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+grid.arrange(arrangeGrob(plot.hos,plot.hos.points,ncol=2),
+             plot.by.state)
+head(pop_state)
+gen_info1=left_join(gen_info,pop_state)
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = cnt), data = gen_info1)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = hos_pop_ratio), data = gen_info1)
+nrow(table(gen_info1$cnt))
+gen_info1=filter(gen_info1,cnt>100)
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = cnt), data = gen_info1)
+gen_info1=filter(gen_info1,cnt>300)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = cnt), data = gen_info1)
+
+
+```
+
+```{r Bivariate Analysis-Aggregration}
+## Comparing Hospitals in terms of Ratings
+
+head(gen_info)
+rating_state<-sqldf('select State,count(*) as cnt,sum(Hospital_overall_rating) as rating from gen_info  group by State order by cnt')
+rating_state$rating= as.numeric(rating_state$rating)
+rating_state=mutate(rating_state,state.rating=rating/cnt)
+top_state_rating=(arrange(rating_state,desc(state.rating)))
+head(top_state_rating,n=10)
+
+hospital.theme<-theme(
+  axis.text = element_text(size = 8),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.title = element_text(size = 10),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_blank(),
+  panel.background = element_rect(fill = "snow1"),
+  legend.position = "right",
+  legend.justification = "top", 
+  legend.background = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+plot.rating.cnt<-ggplot(data = rating_state,
+                         aes(x=as.numeric(cnt),
+                             y=state.rating))+
+  geom_line(size=2,col="yellow3")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+
+plot.rating.cnt.points<-ggplot(data = rating_state,
+                                aes(x=as.factor(cnt),
+                                    y=state.rating))+
+  geom_point(size=1,col="blue")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+plot.by.state <- ggplot(data = rating_state,
+                        aes(x=as.factor(State),
+                            y=state.rating))+
+  geom_bar(stat= "identity", fill="darkred", width=0.5 )+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State",
+       y="Rating Per State")+
+  theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+grid.arrange(arrangeGrob(plot.rating.cnt,plot.rating.cnt.points,ncol=2),
+             plot.by.state)
+
+gen_info2=left_join(gen_info,top_state_rating)
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = cnt), data = gen_info2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = state.rating), data = gen_info2,title="Average Ratings For each State")
+
+```
+##Analyzing dataset
+##Multivariate Analysis
+##Correlation Analysis and Parallel Coordinates
+
+```{r Multivariate Analysis}
+
+## Parallel Coordinate Analysis
+names(gen_info)
+palette=getcolors(6, "rgb")
+scpcp(gen_info[,10:14],sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(16,17,10)],sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(6,7,8,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(6,8,11,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(6,11,13,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(16,13,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(15,14,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(7,10)], sel = gen_info[,10] ,sel.palette=palette)
+scpcp(gen_info[,c(6,10)], sel = gen_info[,10] ,sel.palette=palette)
+
+names(gen_info)
+```
+```{r}
+x=filter(gen_info,Hospital_Type=="Childrens")
+
+table(x$Hospital_overall_rating,useNA = "always")##which means there is no information about performane of childrens hospital available
+gen_info=filter(gen_info,Hospital_Type!="Childrens")
+table(gen_info$Hospital_Type,useNA = "always")
+gen_info$Hospital_Type <- factor(gen_info$Hospital_Type,levels = c("Acute Care Hospitals","Critical Access Hospitals"))
+table(gen_info$Hospital_Type,useNA = "always")
+
+```
+```{r}
+##analysing data on Hospital level
+
+cols <- c("State","City","Hospital_Type","Hospital_Ownership",
+          "capital","Meets_criteria_for_meaningful_use_of_EHRs",
+          "Hospital_overall_rating","mortality",
+          "Safety_of_care",
+          "Readmissions","Patient_experience",
+          "Effectiveness_of_care",
+          "Timeliness_of_care",
+          "Efficient_use_of_medical_imaging")
+gen_info[cols] <- lapply(gen_info[cols], as.factor)
+names(gen_info)
+x=sqldf('select population,land_area,Hospital_overall_rating from gen_info')
+head(x)
+x$Hospital_overall_rating=as.numeric(x$Hospital_overall_rating)
+xx=filter(x,is.na(x$Hospital_overall_rating)==FALSE)
+mean=floor(mean(xx$Hospital_overall_rating))
+x$Hospital_overall_rating[is.na(x$Hospital_overall_rating)]=mean
+x$land_area=as.numeric(x$land_area)
+x$population=as.numeric(x$population)
+cor(x)
+plot(x)
+par(mfrow=c(2, 2))
+colnames <- dimnames(x)[[2]]
+for (i in 1:3) {
+    hist(x[,i], main=colnames[i], probability=TRUE, col="red", border="white")
+}
+
+##Analyzing data on City level
+
+hos_type<-sqldf('select name ,count(*) as count, sum(population) as totalpopulation,sum(land_area) as area,sum(Hospital_overall_rating) as totalratings from gen_info group by name order by count desc' )##name is more useful than city as there may be more cities with same name but different state as name variable has city and state information
+hos_type=data.frame(hos_type)
+hos_type=hos_type %>% mutate(hospitals_person=totalpopulation/count,hospital_area=area/count,average_rating=totalratings/count)
+
+hos_type$totalratings=as.numeric(hos_type$totalratings)
+hos_type$count=as.numeric(hos_type$count)
+xx=filter(hos_type,is.na(hos_type$totalratings)==FALSE)##replacing NA's with mean
+mean=floor(mean(xx$totalratings))
+hos_type$totalratings[is.na(hos_type$totalratings)]=mean
+
+cor(hos_type[,c("count","totalpopulation","totalratings","area")])
+plot(hos_type[,c("count","totalpopulation","totalratings","area")])
+hospital_type=hos_type[,c(1,2,6,7,8)]
+gen_info=left_join(gen_info,hospital_type)
+
+gen_info$hospitals_person=as.numeric(gen_info$hospitals_person)
+q <- quantile(gen_info$hospitals_person, c(0, .25, .50, .75, 1))
+gen_info = data.frame(gen_info, coverage_person=cut(gen_info$hospitals_person, q,labels = c("verygood","good","medium","less"), ordered=TRUE, include.lowest=TRUE))
+levels(gen_info$hospitals_person)
+gen_info$hospital_area=as.numeric(gen_info$hospital_area)
+q <- quantile(gen_info$hospital_area, c(0, .25, .50, .75, 1))
+gen_info = data.frame(gen_info, coverage_area=cut(gen_info$hospital_area, q,labels = c("verygood","good","medium","less"), ordered=TRUE, include.lowest=TRUE))
+plot(gen_info$coverage_area)
+levels(gen_info$coverage_area)
+plot(gen_info$coverage_person)
+
+hos_type$count=as.numeric(hos_type$count)
+hos_type$totalpopulation=as.numeric(hos_type$totalpopulation)
+hos_type$area=as.numeric(hos_type$area)
+hos_type$totalratings=as.numeric(hos_type$totalratings)
+par(mfrow=c(3, 3))
+colnames <- dimnames(hos_type)[[2]]
+for (i in 2:5) {
+    hist(hos_type[,i], main=colnames[i], probability=TRUE, col="red", border="white")
+}
+
+
+sum(is.na(hos_type$totalratings))
+hos_type=data.frame(hos_type)
+hos_type$totalratings=as.numeric(hos_type$totalratings)
+hist(hos_type$totalratings)
+##replacing the NA's with mean of rating
+xx=filter(hos_type,is.na(hos_type$totalratings)==FALSE)
+mean=floor(mean(xx$totalratings))
+hos_type$totalratings[is.na(hos_type$totalratings)]=mean
+cor(hos_type[,-1])
+names(hos_type)
+ scpcp(hos_type[,c(2,5)],sel = hos_type[,5])
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = coverage_area), data = gen_info)+hospital.theme+
+  ggtitle("Hospital over area of city")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = coverage_person), data = gen_info)+hospital.theme+
+  ggtitle("Indivisuals Served per hospital")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+table(gen_info$count)
+range(gen_info$count)
+table(gen_info$coverage_person)
+table(gen_info$coverage_area)
+gen_info$count=as.factor(gen_info$count)
+
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = count), data = gen_info)+hospital.theme+
+  ggtitle("Indivisuals Served per hospital")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+table(gen_info$capital,gen_info$count)
+
+##Analyzing data on State level
+hos_type2<-sqldf('select State ,count(*) as count, sum(population) as totalpopulation,sum(land_area) as area,sum(Hospital_overall_rating) as totalratings from gen_info group by State order by count desc' )
+hos_type2=data.frame(hos_type2)
+hos_type2$totalratings=as.numeric(hos_type2$totalratings)
+hos_type2$count=as.numeric(hos_type2$count)
+class(hos_type2$State)
+
+plot(hos_type2[,-1])
+boxplot(hos_type2[,-1])
+par(mfrow=c(2, 2))
+colnames <- dimnames(hos_type2)[[2]]
+for (i in 2:5) {
+    hist(hos_type2[,i], main=colnames[i], probability=TRUE, col="red", border="white")
+}
+
+
+sum(is.na(hos_type2$totalratings))
+hos_type2=data.frame(hos_type2)
+hos_type2$ratings=as.numeric(hos_type2$totalratings)
+hist(hos_type2$totalratings)
+##replacing the NA's with mean of rating
+xx=filter(hos_type2,is.na(hos_type2$totalratings)==FALSE)
+mean=floor(mean(xx$totalratings))
+hos_type2$totalratings[is.na(hos_type2$totalratings)]=mean
+cor(hos_type2[,-1])
+## No of hospitals is related to population of state and its a positive relation which mean higher the no. of hospitals greater the poulation would be.
+
+```
+```{r}
+a1=filter(gen_info,Hospital_Ownership=="Government - Federal")
+table(a1$Hospital_overall_rating,useNA = "always")
+a2=filter(gen_info,Hospital_Ownership=="Government - Hospital District or Authority")
+table(a2$Hospital_overall_rating,useNA = "always")
+a3=filter(gen_info,Hospital_Ownership=="Government - Local")
+table(a3$Hospital_overall_rating,useNA = "always")			
+a10=filter(gen_info,Hospital_Ownership=="Government - State")
+table(a10$Hospital_overall_rating,useNA = "always")
+a4=filter(gen_info,Hospital_Ownership=="Physician")
+table(a4$Hospital_overall_rating,useNA = "always")
+a5=filter(gen_info,Hospital_Ownership=="Proprietary")
+table(a5$Hospital_overall_rating,useNA = "always")
+a6=filter(gen_info,Hospital_Ownership=="Tribal")
+table(a6$Hospital_overall_rating,useNA = "always")
+a7=filter(gen_info,Hospital_Ownership=="Voluntary non-profit - Church")
+table(a7$Hospital_overall_rating,useNA = "always")
+a8=filter(gen_info,Hospital_Ownership=="Voluntary non-profit - Other")
+table(a8$Hospital_overall_rating,useNA = "always")
+a9=filter(gen_info,Hospital_Ownership=="Voluntary non-profit - Private")
+table(a9$Hospital_overall_rating,useNA = "always")
+
+gen_info=filter(gen_info,
+                  Hospital_Ownership!="Government - Federal" & 
+                  Hospital_Ownership!="Physician"&
+                  Hospital_Ownership!="Tribal" )
+
+
+gen_info$Hospital_Ownership <- factor(gen_info$Hospital_Ownership,levels = c("Hospital District or Authority","Government - Local","Government - State","Proprietary","Voluntary non-profit - Church","Voluntary non-profit - Other","Voluntary non-profit - Private"))
+table(gen_info$Hospital_Ownership,useNA="always")
+
+scpcp(gen_info[,c(7,10)], sel = gen_info[,10] )
+table(gen_info$count)
+
+```
+Data Cleaning
+```{r Data Cleaning}
+table(gen_info$Hospital_Ownership)
+table(gen_info$Hospital_Type)
+
+table(gen_info$Meets_criteria_for_meaningful_use_of_EHRs,useNA="always")
+
+table(gen_info$capital,useNA="always")
+
+nrow(table(gen_info$name,useNA="always"))
+
+table(gen_info$Safety_of_care,useNA="always")
+
+table(gen_info$mortality,useNA="always")
+
+table(gen_info$Readmissions,useNA="always")
+
+table(gen_info$Patient_experience,useNA="always")
+
+table(gen_info$Effectiveness_of_care,useNA="always")
+
+table(gen_info$Timeliness_of_care,useNA="always")
+
+table(gen_info$Efficient_use_of_medical_imaging,useNA="always")
+## Assigning values to NA's
+
+gen_info$Safety_of_care[is.na(gen_info$Safety_of_care)]="Same as the National average"
+
+gen_info$mortality[is.na(gen_info$mortality)]="Same as the National average"
+
+gen_info$Readmissions[is.na(gen_info$Readmissions)]="Same as the National average"
+
+gen_info$Patient_experience[is.na(gen_info$Patient_experience)]="Above the National average"
+
+gen_info$Effectiveness_of_care[is.na(gen_info$Effectiveness_of_care)]="Same as the National average"
+
+gen_info$Timeliness_of_care[is.na(gen_info$Timeliness_of_care)]="Same as the National average"
+
+gen_info$Efficient_use_of_medical_imaging[is.na(gen_info$Efficient_use_of_medical_imaging)]="Same as the National average"
+
+
+```
+```{r Rating Imputation}
+##dividing gen_info into two 
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+dataset2=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==TRUE)## 24% od data
+nrow(dataset1)
+nrow(gen_info)
+nrow(dataset2)
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+table(dataset1$Hospital_overall_rating)
+class(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+table(dataset1$Hospital_overall_rating)
+
+
+crx <- dataset1[ sample( nrow( dataset1 ) ), ]
+X <- crx[,2:11]
+y <- crx[,1]
+trainX <- X[1:3200,]
+trainy <- y[1:3200]
+testX <- X[3201:3579,]
+testy <- y[3201:3579]
+
+model <- C50::C5.0( trainX, trainy )
+summary( model )
+
+p<- predict( model, testX, type="class" )
+sum( p == testy ) / length( p )*100##53% accuracy
+
+##tree 2 with different levels of ratings using C50 Tree
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating<=2)] = "1"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==3)] = "2"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==4)|(dataset1$Hospital_overall_rating==5)] = "3"
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+table(dataset1$Hospital_overall_rating)       
+nrow(dataset1)
+names(dataset1)
+set.seed(12)
+crx <- dataset1[ sample( nrow( dataset1 ) ), ]
+X <- crx[,2:12]
+y <- crx[,1]
+trainX <- X[1:3200,]
+trainy <- y[1:3200]
+testX <- X[3201:3579,]
+testy <- y[3201:3579]
+
+model <- C50::C5.0( trainX, trainy )
+summary( model )
+p<- predict( model, testX, type="class" )
+sum( p == testy ) / length( p )*100##74.406
+C5imp(model)
+
+##adding boosting
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+nrow(dataset1)
+names(dataset1)
+crx <- dataset1[ sample( nrow( dataset1 ) ), ]
+X <- crx[,2:10]
+y <- crx[,1]
+trainX <- X[1:3200,]
+trainy <- y[1:3200]
+testX <- X[3201:3579,]
+testy <- y[3201:3579]
+
+model <- C50::C5.0( trainX, trainy, trials=10 )
+summary( model )
+
+p<- predict( model, testX, type="class" )
+sum( p == testy ) / length( p )*100
+```
+
+```{r}
+##using ctree
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+
+TreeModel = ctree(Hospital_overall_rating~., data = train)
+plot(TreeModel, type="simple")
+x_Pred <- predict(TreeModel,test)
+table(x_Pred, test$Hospital_overall_rating) 
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+Accuracy*100
+## accuracy = 56.28
+
+## using 3 levels of ratings
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating<=2)] = "1"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==3)] = "2"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==4)|(dataset1$Hospital_overall_rating==5)] = "3"
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+TreeModel = ctree(Hospital_overall_rating~., data = train)
+plot(TreeModel, type="simple")
+x_Pred <- predict(TreeModel,test)
+table(x_Pred, test$Hospital_overall_rating) 
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+Accuracy*100
+
+```
+
+```{r}
+##using rpart
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("State",
+                      "Hospital_Type","Hospital_Ownership","Emergency_Services",
+                      "Hospital_overall_rating","mortality",
+                      "Safety_of_care",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care","pop_bin","capital")]
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+Tree <- rpart(Hospital_overall_rating ~ . , data = train, method = "anova")
+
+rpart.plot(Tree, extra=1, type=2, digits=4)
+head(train)
+# What variables are used in the best model?
+summary(Tree)
+
+x_Pred <- predict(Tree, test)
+table(x_Pred, test$Hospital_overall_rating) 
+
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+Accuracy*100##Accuracy is very low 14.804%
+## using 3 levels of ratings
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating<=2)] = "1"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==3)] = "2"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==4)|(dataset1$Hospital_overall_rating==5)] = "3"
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+Tree <- rpart(Hospital_overall_rating ~ . , data = train, method = "anova")
+
+rpart.plot(Tree, extra=1, type=2, digits=4)
+head(train)
+# What variables are used in the best model?
+summary(Tree)
+
+x_Pred <- predict(Tree, test)
+table(x_Pred, test$Hospital_overall_rating) 
+
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+
+```
+Naive Bayes Classifier
+```{r naive bayes}
+##Using Naive bayes Classifier
+
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+
+model <- naiveBayes(Hospital_overall_rating ~ ., data = train)
+class(model)
+summary(model)
+print(model)
+x_pred <- predict(model, newdata = test)
+table(x_Pred, test$Hospital_overall_rating) 
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+Accuracy*100##35.89% accuracy
+
+##using 3 levels of ratings
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating<=2)] = "1"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==3)] = "2"
+levels(dataset1$Hospital_overall_rating)=dataset1$Hospital_overall_rating[(dataset1$Hospital_overall_rating==4)|(dataset1$Hospital_overall_rating==5)] = "3"
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+
+model <- naiveBayes(Hospital_overall_rating ~ ., data = train)
+class(model)
+summary(model)
+print(model)
+x_pred <- predict(model, newdata = test)
+table(x_Pred, test$Hospital_overall_rating) 
+confusion_matrix = table(x_Pred, test$Hospital_overall_rating)
+TP = sum(diag(confusion_matrix))
+Accuracy = TP/sum(confusion_matrix)
+Accuracy*100##10.05Accuracy
+
+```
+
+##KNN
+
+```{r}
+
+
+## using KNN Clustrering
+library(knncat)
+
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+dataset2=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==TRUE)## 24% od data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+table(dataset1$Hospital_overall_rating,useNA = "always")
+dataset1$Hospital_Type <- factor(dataset1$Hospital_Type,levels = c("Acute Care Hospitals","Critical Access Hospitals"))
+table(dataset1$Hospital_overall_rating,useNA = "always")
+table(dataset1$State,useNA = "always")
+dataset1$State=factor(dataset1$State,levels = c("AK","AL","AR","AZ","CA","CO","CT","DC","DE","FL","GA",
+                                                "HI","IA","ID","IL","IN","KS","KY","LA","MA","ME",
+                                                "MI","MN","MO","MS","MT","NC","ND","NE","NH","NJ","NM",
+                                                "NV","NY","OH","OK","OR","PA","PR","RI","SC","SD","TN","TX",
+                                                "UT","VA","VT","WA","WI","WV","WY"))
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.7))
+train1 <- dataset1[x_train,]
+test1<-dataset1[-x_train,]
+predictions= knncat(train1,test1,k=3)
+TP = sum(diag(predictions$misclass.mat))
+Accuracy = TP/sum(predictions$misclass.mat)
+Accuracy*100## accuracy=53.35
+```
+
+comparing models
+
+
+```{r Comparing Model -Performance Metrics}
+
+##Cross Validating C5.0
+
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+
+# train the model
+model_C5.0 <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="C5.0")
+# summarize results
+print(model_C5.0)
+
+x_pred1 <- predict(model_C5.0, newdata = test)
+table(x_pred1, test$Hospital_overall_rating) 
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+
+## validating ctree
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+# fix the parameters of the algorithm
+grid <- expand.grid(.fL=c(0), .usekernel=c(FALSE))
+# train the model
+model_ctree <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="ctree")
+# summarize results
+print(model_ctree)
+
+x_pred1 <- predict(model_ctree, newdata = test,type="raw")
+table(x_pred1, test$Hospital_overall_rating) 
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+
+
+## Cross Validation
+##cross validating the model
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+# fix the parameters of the algorithm
+grid <- expand.grid(.fL=c(0), .usekernel=c(FALSE))
+# train the model
+model_rpart <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="rpart")
+# summarize results
+print(model_rpart)
+
+x_pred1 <- predict(model_rpart, newdata = test,type="raw")
+table(x_pred1, test$Hospital_overall_rating) 
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+
+
+##cross validating the nb model
+
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+table(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type","Emergency_Services",
+                      "mortality","coverage_area",
+                      "Safety_of_care","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+# fix the parameters of the algorithm
+grid <- expand.grid(.fL=c(0), .usekernel=c(FALSE))
+# train the model
+model_nb <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="nb")
+# summarize results
+print(model_nb)
+
+x_pred1 <- predict(model_nb, newdata = test,type="raw")
+table(x_pred1, test$Hospital_overall_rating) 
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+
+##cross validating the knn model
+
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+set.seed(1)
+x_train <- sample(nrow(dataset1), floor(nrow(dataset1)*0.8))
+train <- dataset1[x_train,]
+test<-dataset1[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+# fix the parameters of the algorithm
+grid <- expand.grid(.fL=c(0), .usekernel=c(FALSE))
+# train the model
+model_knn <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="knn")
+# summarize results
+print(model_knn)
+
+x_pred1 <- predict(model_knn, newdata = test,type="raw")
+table(x_pred1, test$Hospital_overall_rating) 
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+
+##identifying best model
+resamps <- resamples(list(nb = model_nb,
+                          ctree=model_ctree,
+                          rpart= model_rpart,
+                          knn = model_knn,
+                          C5.0 = model_C5.0))
+
+bwplot(resamps, layout = c(3, 1))
+dotplot(resamps, metric = "Accuracy")
+dotplot(resamps, metric = "Kappa")
+xyplot(resamps, what = "BlandAltman")##best models
+
+```
+##Model Implementation 
+```{r Implementation}
+dataset1=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==FALSE)##76% of data
+names(dataset1)
+dataset2=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==TRUE)## 24% od data
+table(dataset1$Hospital_overall_rating)
+dataset1$Hospital_overall_rating=as.numeric(dataset1$Hospital_overall_rating)
+dataset1<-dataset1[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care","latitude","longitude","City","name")]
+dataset1$Hospital_overall_rating=as.factor(dataset1$Hospital_overall_rating)
+nrow(dataset1)
+names(dataset1)
+set.seed(12)
+crx <- dataset1[ sample( nrow( dataset1 ) ), ]
+X <- crx[,2:11]
+y <- crx[,1]
+trainX <- X[1:3200,]
+trainy <- y[1:3200]
+testX <- X[3201:3579,]
+testy <- y[3201:3579]
+library(C50)
+
+model <- C50::C5.0( trainX, trainy )
+summary( model )
+p<- predict( model, testX, type="class" )
+sum( p == testy ) / length( p )*100
+C5imp(model)
+
+##predicting ratings for dataset2
+dataset2=filter(gen_info,is.na(gen_info$Hospital_overall_rating)==TRUE)## 24% od data
+dataset2<-dataset2[,c("Hospital_overall_rating",
+                      "State","Hospital_Type",
+                      "mortality","coverage_area", "Readmissions","Patient_experience",
+                      "Safety_of_care","count","coverage_person",
+                      "Effectiveness_of_care",
+                      "Timeliness_of_care","latitude","longitude","name","City")]
+
+p<- predict( model, dataset2[,2:11], type="class" )
+head(dataset2)
+class(p)
+p=data.frame(p)
+names(p)="Hospital_overall_rating"
+dataset=bind_cols(p,dataset2)
+dataset=data.frame(dataset)
+
+hospital_info=bind_rows(dataset,dataset1)
+class(hospital_info)
+nrow(hospital_info)
+nrow(gen_info)
+hospitals=hospital_info[,c(-2,-9,-13,-14,-15,-16)]
+hospitals$Hospital_overall_rating=as.factor(hospitals$Hospital_overall_rating)
+hospitals=filter(hospitals,is.na(hospitals$State)==FALSE)
+table(hospitals$Hospital_overall_rating,useNA = "always")
+hospitals=hospitals[,-11]
+names(hospitals)
+set.seed(1234)
+x_train <- sample(nrow(hospitals), floor(nrow(hospitals)*0.8))
+train <- hospitals[x_train,]
+test<-hospitals[-x_train,]
+library(caret)
+library(klaR)
+# define training control
+train_control <- trainControl(method="cv", number=10, savePredictions = TRUE)
+names(hospitals)
+# train the model
+model_C5.0 <- train(Hospital_overall_rating~., data=train, trControl=train_control, method="C5.0")
+# summarize results
+print(model_C5.0)
+plot(model_C5.0)
+
+x_pred1 <- predict(model_C5.0, newdata = test)
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating)
+confusionMatrix(data = x_pred1, test$Hospital_overall_rating,mode = "prec_recall")
+table(x_pred1, test$Hospital_overall_rating)
+
+
+```
+Final Results
+```{r}
+nrow(hospital_info)
+hospital_info=filter(hospital_info,is.na(hospital_info$State)==FALSE)
+names(hospital_info)
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = Hospital_overall_rating), data = hospital_info)+hospital.theme+
+  ggtitle("Hospital Ratings ")+
+    theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+gen_info$Hospital_overall_rating=as.numeric(gen_info$Hospital_overall_rating)
+boxplot(gen_info$Hospital_overall_rating,horizontal=T,main = "Hospital rating distribution",col=c("pink","blue","green","yellow","grey"))
+hist(gen_info$Hospital_overall_rating,horizontal=T,main = "Hospital rating distribution",col=c("pink","blue","green","yellow","grey"))
+table(gen_info$Hospital_overall_rating,useNA = "always")
+table(hospital_info$Hospital_overall_rating,useNA = "always")
+hospital_info$Hospital_overall_rating=as.numeric(hospital_info$Hospital_overall_rating)
+boxplot(hospital_info$Hospital_overall_rating,horizontal=T,main = "Hospital rating distribution",col=c("pink","blue","green","yellow","grey"))
+hist(hospital_info$Hospital_overall_rating,horizontal=T,main = "Hospital rating distribution",col=c("pink","blue","green","yellow","grey"))
+
+
+rating_state<-sqldf('select State,count(*) as cnt,sum(Hospital_overall_rating) as rating from hospital_info  group by State order by cnt')
+rating_state$rating= as.numeric(rating_state$rating)
+rating_state=mutate(rating_state,state.rating=rating/cnt)
+top_state_rating=(arrange(rating_state,desc(state.rating)))
+head(top_state_rating,n=10)
+
+hospital.theme<-theme(
+  axis.text = element_text(size = 8),
+  axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.title = element_text(size = 10),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_blank(),
+  panel.background = element_rect(fill = "snow1"),
+  legend.position = "right",
+  legend.justification = "top", 
+  legend.background = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+plot.rating.cnt<-ggplot(data = rating_state,
+                         aes(x=as.numeric(cnt),
+                             y=state.rating))+
+  geom_line(size=2,col="blue")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+
+plot.rating.cnt.points<-ggplot(data = rating_state,
+                                aes(x=as.factor(cnt),
+                                    y=state.rating))+
+  geom_point(size=1,col="blue")+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State Name",
+       y="Ratings")+
+  theme(axis.text.x=element_text(size= 5, angle=90,hjust = 0.5))
+plot.by.state <- ggplot(data = rating_state,
+                        aes(x=as.factor(State),
+                            y=state.rating))+
+  geom_bar(stat= "identity", fill="blue", width=0.5 )+
+  hospital.theme+
+  ggtitle("Rating For Each State")+
+  labs(x="State",
+       y="Average Rating Per State")+
+  theme(axis.text.x=element_text(size= 6, angle=90,hjust = 0.5))
+
+grid.arrange(arrangeGrob(plot.rating.cnt,plot.rating.cnt.points,ncol=2),
+             plot.by.state)
+
+gen_info2=left_join(gen_info,top_state_rating)
+
+StateMap <- qmap("USA", zoom = 3, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = cnt), data = gen_info2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = state.rating), data = gen_info2,title="Average Ratings For each State")
+nrow(top_state_rating)
+topten=head(top_state_rating,n=10)
+topten
+bottomten=tail(top_state_rating,n=10)
+bottomten
+library(noncensus)
+data(zip_codes)## adding latitude and longitude based on zip cods
+top10=filter(zip_codes,state==c("DE","MN","NH","WI","ID","UT","IA","IN","ME","OH"))
+bottom10=filter(zip_codes,state==c("DC","PR","NY","NV","NJ","NM","CT","WV","AR","FL"))
+
+StateMap <- qmap("USA", zoom = 4, color = "bw", legend = "topright",ncol=2)
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = state ), data = top10)+hospital.theme+
+  ggtitle("Top 10 States of USA")
+
+StateMap + geom_point(aes(x = longitude, y = latitude, colour = state ), data = bottom10)+hospital.theme+
+  ggtitle("Bottom 10 States of USA")
+table(hospital_info$Hospital_overall_rating,hospital_info$Hospital_Type)
+```
+
+    
+
+
+
+
+```
